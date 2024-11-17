@@ -5,6 +5,7 @@ from time import sleep
 from retrying import retry
 from typing import Tuple
 from itertools import chain
+from datetime import date
 
 URL = "https://search-service.fincaraiz.com.co/api/v1/properties/search"
 property_type_id = [1,2,14] #1: casa, 2: apartamento, 14: apartaestudio
@@ -73,7 +74,7 @@ def get_data(url: str, request_json: dict)-> Tuple[int, str]:
     return status_code, response_text
 
 
-def data_extract(city_information : list, property_type_id : list, debug : bool = False) -> list:
+def data_extract(city_information: list, property_type_id: list, debug: bool = False) -> list:
     """
     Extracts data based on city information and property types.
 
@@ -163,7 +164,7 @@ def data_load(df: pd.DataFrame):
     -------
     None
     """
-    df.to_csv('COLOMBIA_REAL_STATE.csv', index = False)
+    df.to_csv(f"COLOMBIA_REAL_STATE_{date.today()}.csv", index = False)
 
 if __name__ == '__main__':
     
