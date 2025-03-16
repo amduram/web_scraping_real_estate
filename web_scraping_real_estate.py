@@ -67,8 +67,10 @@ def get_data(url: str, request_json: dict)-> Tuple[int, str]:
     response_text = response.text
 
     if status_code == 504:
+        print("504")
         raise ValueError('Status code is 504')
     if status_code == 500:
+        print("500")
         raise ValueError('No more info')
 
     return status_code, response_text
@@ -96,6 +98,7 @@ def data_extract(city_information: list, property_type_id: list, debug: bool = F
     raw_data = []
 
     for property_type in property_type_id:
+        last_response_body = {}
         page = 1
         print(f"Property: {property_type}")
         while True:
@@ -107,11 +110,16 @@ def data_extract(city_information: list, property_type_id: list, debug: bool = F
             except ValueError as e:
                 print(e, URL, request_json)
                 break
-            else:
-                response_body = json.loads(response_text)
-                #add data to empty element
-                raw_data.append(response_body['hits']['hits'])
-                page += 1
+            
+            response_body = json.loads(response_text)["hits"]["hits"]
+            #add data to empty element
+            if response_body == last_response_body:
+                break
+            raw_data.append(response_body)
+            page += 1
+
+            last_response_body = response_body
+
             if debug:
                 if page % 10 == 0:
                     print(f"Page: {page}")
