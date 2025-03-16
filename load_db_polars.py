@@ -1,5 +1,4 @@
-import pandas as pd
-import numpy as np
+import polars as pl
 import sqlite3
 import mysql.connector
 from sqlalchemy import create_engine
@@ -8,33 +7,43 @@ import json
 TABLE_NAMES = ['living_space', 'cities', 'properties']
 DB_NAME = "col_real_estate"
 
-def impute_values(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Impute missing values and clean up the data in a DataFrame.
+def impute_values(df: pl.DataFrame) -> pl.DataFrame:
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame containing property data.
+    df = df.unique()
+    df = df.drop_nulls("area")
 
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with imputed values for `rooms` and `stratum`, and duplicate rows removed.
-    """
-    df.drop_duplicates(inplace=True)
-    df.dropna(subset='area', inplace=True)
-
-    df['rooms'] = df.apply(lambda x: 1 if (not(x['rooms']>0) and x['property_type']=='Apartaestudio') else x['rooms'], axis=1)
-    df['rooms'] = df['rooms'].fillna(0)
-
-    df['stratum'] = df.apply(lambda x: 1 if x['stratum']<1 else x['stratum'], axis=1)
-    df['stratum'] = df.apply(lambda x: 6 if x['stratum']>6 else x['stratum'], axis=1)
-            
+    df = df.with_columns(
+        pl.when(pl.col('rooms').is_null() & (pl.col('property_type') == 'Apartaestudio'))
+        .then(1)
+        .otherwise(pl.col('rooms'))
+        .alias('rooms')
+        )
+    
+    df = df.with_columns(
+        pl.when(pl.col('rooms').is_null())
+        .then(0)
+        .otherwise(pl.col('rooms'))
+        .alias('rooms')
+        )
+    
+    df = df.with_columns(
+        pl.when(pl.col("stratum") < 1)
+        .then(1)
+        .otherwise(pl.col("stratum"))
+        .alias("stratum")
+        )
+    
+    df = df.with_columns(
+        pl.when(pl.col("stratum") > 6)
+        .then(6)
+        .otherwise(pl.col("stratum"))
+        .alias("stratum")
+        )
+    
     return df
 
 
-def create_tables(df: pd.DataFrame) -> list[pd.DataFrame]:
+def create_tables(df: pl.DataFrame) -> list[pl.DataFrame]:
     """
     Create tables from a DataFrame with real estate data for database insertion.
 
@@ -50,20 +59,24 @@ def create_tables(df: pd.DataFrame) -> list[pd.DataFrame]:
         main properties table, cities, and property types.
     """
     #Create cities table
-    cities = pd.DataFrame({
-        'city_id' : np.arange(1,len(df['city'].unique())+1).tolist(),
-        'city_name' : df['city'].unique()
-    })
+    cities = pl.DataFrame({
+        "city_name": (
+            df.get_column("city"))
+            .unique()
+            .sort()
+            }).with_row_index("city_id", 1)
 
     #Create property type table
-    property_type = pd.DataFrame({
-        'property_type_id' : np.arange(1,len(df['property_type'].unique())+1),
-        'property_type' : df['property_type'].unique()
-    })
+    property_type = pl.DataFrame({
+        "property_type": (
+            df.get_column("property_type"))
+            .unique()
+            .sort()
+            }).with_row_index("property_type_id", 1)
 
     # Merge cities and property type into main DataFrame
-    df = df.merge(cities, left_on='city',right_on='city_name', how='left').drop(columns=['city_name','city'])
-    df = df.merge(property_type, on='property_type', how='left')[['id','price','area','rooms','bathrooms','garage','property_type_id','stratum','location','city_id']]
+    df = df.join(cities, left_on='city', right_on='city_name', how='left')
+    df = df.join(property_type, on='property_type', how='left').select(['id', 'price', 'area', 'rooms', 'bathrooms', 'garage', 'property_type_id', 'stratum', 'location', 'city_id'])
 
     tables_list = [df, cities, property_type]
     
@@ -107,7 +120,7 @@ def connect_to_db(db_type: str) -> (sqlite3.Connection | mysql.connector.connect
     return db_connection
 
 
-def load_to_db(tables_list: list[pd.DataFrame], db_connection: (sqlite3.Connection | mysql.connector.connection_cext.CMySQLConnection), table_names: list[str]) -> None:
+def load_to_db(tables_list: list[pl.DataFrame], db_connection: (sqlite3.Connection | mysql.connector.connection_cext.CMySQLConnection), table_names: list[str]) -> None:
     """
     Load DataFrames into a database.
 
@@ -126,19 +139,19 @@ def load_to_db(tables_list: list[pd.DataFrame], db_connection: (sqlite3.Connecti
     """
     if isinstance(db_connection, sqlite3.Connection):
 
-        [tables_list[count].to_sql(table_names[count], db_connection, if_exists='replace', index=False) for count in range(len(tables_list))]
+        [tables_list[count].write_database(table_names[count], f"sqlite:///./{DB_NAME}.db", if_table_exists='replace') for count in range(len(tables_list))]
         db_connection.close()
 
     elif isinstance(db_connection, mysql.connector.connection_cext.CMySQLConnection):
 
         engine = create_engine(f"mysql+pymysql://{db_connection._user}:{db_connection._password}@{db_connection._host}/{DB_NAME}")
-        [tables_list[count].to_sql(table_names[count], engine, if_exists="replace", index=False) for count in range(len(tables_list))]
+        [tables_list[count].write_database(table_names[count], engine, if_table_exists="replace") for count in range(len(tables_list))]
         db_connection.close()
 
 
 if __name__ == '__main__':
     # Load data from CSV
-    df = pd.read_csv('/home/amduram/amduram/data_mentoring/web_scraping_real_estate/COLOMBIA_REAL_STATE_2024-11-25.csv')
+    df = pl.read_csv("/home/amduram/amduram/data_mentoring/web_scraping_real_estate/COLOMBIA_REAL_STATE_2024-11-25.csv")
 
     # Process and load data
     df = impute_values(df)
